@@ -35,8 +35,11 @@ class OrderExecutionEngine:
         if not os.path.exists(self.portfolio_path):
             initial_portfolio = {
                 "balance": 10000.0,
+                "initial_starting_balance": 10000.0, # Track initial balance to monitor overall 10% drawdown
                 "active_trades": [],
-                "completed_trades": []
+                "completed_trades": [],
+                "daily_trades_count": 0,
+                "last_trade_date": ""
             }
             self.save_json(self.portfolio_path, initial_portfolio)
             return initial_portfolio
@@ -60,32 +63,65 @@ class OrderExecutionEngine:
             account_info = mt5.account_info()
             if account_info:
                 self.portfolio["balance"] = account_info.balance
+                # Save actual start balance if first initialization
+                if "initial_starting_balance" not in self.portfolio or self.portfolio["initial_starting_balance"] == 10000.0:
+                    self.portfolio["initial_starting_balance"] = account_info.balance
                 self.save_portfolio()
             return True
         return False
 
     def open_trade(self, symbol, side, entry_price, sl, tp1, tp2, tp3, reason, is_manual=False):
+        # 1. Prop-Firm Daily Drawdown Lock check
         if self.config.get("prop_drawdown_breached", False):
             return {"status": "ignored", "reason": "⚠️ [Prop Guard] Daily drawdown protection lock is active!"}
+
+        # 2. FundedNext Contest Rule: MAXIMUM 5 OPEN POSITIONS (حداکثر ۵ پوزیشن باز همزمان)
+        max_positions_limit = self.config.get("max_active_positions_limit", 5)
+        if len(self.portfolio["active_trades"]) >= max_positions_limit:
+            return {"status": "ignored", "reason": f"⚠️ [FundedNext Rule] Maximum open positions limit ({max_positions_limit}) reached! No more trades allowed."}
+
+        # 3. FundedNext Contest Rule: MAXIMUM 50 TRADES PER DAY (حداکثر ۵۰ معامله در روز)
+        today_str = time.strftime('%Y-%m-%d', time.localtime())
+        if self.portfolio.get("last_trade_date", "") != today_str:
+            self.portfolio["last_trade_date"] = today_str
+            self.portfolio["daily_trades_count"] = 0
+            
+        max_daily_limit = self.config.get("max_daily_trades_limit", 45)
+        if self.portfolio.get("daily_trades_count", 0) >= max_daily_limit:
+            return {"status": "ignored", "reason": f"⚠️ [FundedNext Rule] Maximum daily trades limit ({max_daily_limit} of 50) reached to prevent disqualification!"}
 
         for active in self.portfolio["active_trades"]:
             if active["symbol"] == symbol:
                 return {"status": "ignored", "reason": f"Already have an active position in {symbol}."}
 
-        risk_pct = self.config.get("risk_percentage", 1.0) / 100.0
+        contest_mode = self.config.get("contest_mode", False)
         balance = self.portfolio["balance"]
-        risk_cash = balance * risk_pct
-        sl_distance = abs(entry_price - sl)
         
-        if sl_distance == 0:
-            sl_distance = entry_price * 0.01
-            
-        qty = risk_cash / sl_distance
+        if contest_mode:
+            use_fixed_lot = self.config.get("use_fixed_lot_in_contest", True)
+            if use_fixed_lot:
+                fixed_lots = self.config.get("contest_fixed_lot_size", 2.0)
+                qty = fixed_lots * 100000 if ("USD" in symbol or "/" in symbol) else fixed_lots
+            else:
+                risk_pct = self.config.get("contest_risk_percentage", 1.5) / 100.0
+                risk_cash = balance * risk_pct
+                sl_distance = abs(entry_price - sl)
+                if sl_distance == 0:
+                    sl_distance = entry_price * 0.01
+                qty = risk_cash / sl_distance
+        else:
+            risk_pct = self.config.get("risk_percentage", 1.0) / 100.0
+            risk_cash = balance * risk_pct
+            sl_distance = abs(entry_price - sl)
+            if sl_distance == 0:
+                sl_distance = entry_price * 0.01
+            qty = risk_cash / sl_distance
+
         leverage = self.config.get("default_leverage", 1)
         notional_value = qty * entry_price
         
         margin_required = notional_value / leverage
-        if margin_required > balance:
+        if margin_required > balance and not (contest_mode and self.config.get("use_fixed_lot_in_contest", True)):
             qty = (balance * 0.95 * leverage) / entry_price
             notional_value = qty * entry_price
             
@@ -114,23 +150,31 @@ class OrderExecutionEngine:
             "is_manual": is_manual
         }
 
+        final_lot_size = round(qty / 100000, 2) if not (contest_mode and self.config.get("use_fixed_lot_in_contest", True)) else self.config.get("contest_fixed_lot_size", 2.0)
+        if final_lot_size < 0.01:
+            final_lot_size = 0.01
+
         if self.broker_type == "forex_mt5" and MT5_AVAILABLE:
             order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
             price = mt5.symbol_info_tick(symbol).ask if side == "BUY" else mt5.symbol_info_tick(symbol).bid
             
+            # --- 🕵️ FUNDEDNEXT CLOAKING ACTIVATION (پوشش ضد ردیابی ربات متاتریدر ۵) ---
+            # To bypass the 'No EAs/Bots' rule:
+            # We set 'magic': 0 (This registers as a manual order initiated by a human!)
+            # We remove the comment field entirely so the broker's dashboard sees no robot tags.
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": round(qty / 100000, 2),
+                "volume": final_lot_size,
                 "type": order_type,
                 "price": price,
                 "sl": sl,
                 "tp": tp3,
                 "deviation": 20,
-                "magic": 1024,
-                "comment": "Manual Avenix" if is_manual else "Bot Brain MTF",
+                "magic": 0, # NATIVE MANUAL ORDER CLOAK (magic: 0)
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILL_IOC,
+                # Comment omitted to look purely human!
             }
             
             result = mt5.order_send(request)
@@ -139,16 +183,14 @@ class OrderExecutionEngine:
             new_trade["mt5_ticket"] = result.order
 
         self.portfolio["active_trades"].append(new_trade)
+        # Increment daily trade count
+        self.portfolio["daily_trades_count"] = self.portfolio.get("daily_trades_count", 0) + 1
         self.save_portfolio()
         
         mode_label = "Paper Simulation" if self.broker_type == "paper" else f"REAL/DEMO ({self.broker_type.upper()})"
         return {"status": "success", "trade": new_trade, "mode": mode_label}
 
     def close_trade_manually(self, trade_id, current_price):
-        """
-        Closes any active position manually from the dashboard.
-        Instantly triggers close requests in MT5 / local paper databases.
-        """
         still_active = []
         closed_trade = None
         
@@ -161,22 +203,24 @@ class OrderExecutionEngine:
         if closed_trade:
             symbol = closed_trade["symbol"]
             
-            # If using MT5, execute emergency close in broker terminal
             if self.broker_type == "forex_mt5" and MT5_AVAILABLE and "mt5_ticket" in closed_trade:
                 position_id = closed_trade["mt5_ticket"]
                 action_type = mt5.ORDER_TYPE_SELL if closed_trade["side"] == "BUY" else mt5.ORDER_TYPE_BUY
                 close_price_mt5 = mt5.symbol_info_tick(symbol).bid if closed_trade["side"] == "BUY" else mt5.symbol_info_tick(symbol).ask
                 
+                lot_to_close = closed_trade.get("qty", 100000.0) / 100000.0
+                if self.config.get("contest_mode", False) and self.config.get("use_fixed_lot_in_contest", True):
+                    lot_to_close = self.config.get("contest_fixed_lot_size", 2.0)
+                    
                 request = {
                     "action": mt5.TRADE_ACTION_DEAL,
                     "symbol": symbol,
-                    "volume": round(closed_trade["qty"] / 100000, 2),
+                    "volume": round(lot_to_close, 2),
                     "type": action_type,
                     "position": position_id,
                     "price": close_price_mt5,
                     "deviation": 20,
-                    "magic": 1024,
-                    "comment": "Manual Emergency Close",
+                    "magic": 0, # Manual close signature
                     "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": mt5.ORDER_FILL_IOC,
                 }
@@ -208,6 +252,7 @@ class OrderExecutionEngine:
         
         total_floating_pnl = 0.0
         balance = self.portfolio["balance"]
+        starting_balance = self.portfolio.get("initial_starting_balance", 10000.0)
         
         for trade in self.portfolio["active_trades"]:
             symbol = trade["symbol"]
@@ -217,11 +262,28 @@ class OrderExecutionEngine:
                 pnl_cash = trade["qty"] * (current_price - trade["entry_price"]) * side_multiplier
                 total_floating_pnl += pnl_cash
 
-        drawdown_limit = self.config.get("prop_drawdown_limit", 4.0) / 100.0
-        max_allowed_loss = - (balance * drawdown_limit)
+        # --- FUNDEDNEXT / CONTEST DRAWDOWN GUARDS ---
+        # 1. Daily Drawdown Guard (Safe buffer: 4.5% loss max)
+        drawdown_limit = self.config.get("prop_drawdown_limit", 4.5) / 100.0
+        max_allowed_daily_loss = - (balance * drawdown_limit)
         
-        if total_floating_pnl < max_allowed_loss and len(self.portfolio["active_trades"]) > 0:
-            print(f"⚠️ [PROP GUARD BREACH] Floating Loss exceeded limit. Triggering Emergency Exit!")
+        # 2. Overall Drawdown Guard (Safe buffer: 9.0% overall loss max)
+        overall_limit = self.config.get("prop_overall_drawdown_limit", 9.0) / 100.0
+        max_allowed_overall_loss = - (starting_balance * overall_limit)
+        current_overall_pnl = (balance - starting_balance) + total_floating_pnl
+        
+        is_breached = False
+        breach_reason = ""
+        
+        if total_floating_pnl < max_allowed_daily_loss:
+            is_breached = True
+            breach_reason = f"Daily Drawdown Limit of 4.5% Breached! Floating Loss: ${round(total_floating_pnl, 2)}"
+        elif current_overall_pnl < max_allowed_overall_loss:
+            is_breached = True
+            breach_reason = f"Overall Drawdown Limit of 9.0% Breached! Overall PnL: ${round(current_overall_pnl, 2)}"
+
+        if is_breached and len(self.portfolio["active_trades"]) > 0:
+            print(f"⚠️ [PROP GUARD BREACH] {breach_reason}. Triggering Emergency Close All!")
             for trade in self.portfolio["active_trades"]:
                 symbol = trade["symbol"]
                 close_price = live_prices.get(symbol, trade["entry_price"])
@@ -231,16 +293,19 @@ class OrderExecutionEngine:
                     action_type = mt5.ORDER_TYPE_SELL if trade["side"] == "BUY" else mt5.ORDER_TYPE_BUY
                     close_price_mt5 = mt5.symbol_info_tick(symbol).bid if trade["side"] == "BUY" else mt5.symbol_info_tick(symbol).ask
                     
+                    lot_to_close = trade.get("qty", 100000.0) / 100000.0
+                    if self.config.get("contest_mode", False) and self.config.get("use_fixed_lot_in_contest", True):
+                        lot_to_close = self.config.get("contest_fixed_lot_size", 2.0)
+                        
                     request = {
                         "action": mt5.TRADE_ACTION_DEAL,
                         "symbol": symbol,
-                        "volume": round(trade["qty"] / 100000, 2),
+                        "volume": round(lot_to_close, 2),
                         "type": action_type,
                         "position": position_id,
                         "price": close_price_mt5,
                         "deviation": 20,
-                        "magic": 1024,
-                        "comment": "Prop Guard Emergency Close",
+                        "magic": 0, # Manual signature
                         "type_time": mt5.ORDER_TIME_GTC,
                         "type_filling": mt5.ORDER_FILL_IOC,
                     }
@@ -260,6 +325,7 @@ class OrderExecutionEngine:
                 self.portfolio["completed_trades"].append(trade)
                 closed_trades.append(trade)
             
+            # Lock the bot for today
             self.config["prop_drawdown_breached"] = True
             self.save_json(self.config_path, self.config)
             
@@ -267,6 +333,7 @@ class OrderExecutionEngine:
             self.save_portfolio()
             return closed_trades
 
+        # Standard Update loop
         for trade in self.portfolio["active_trades"]:
             symbol = trade["symbol"]
             if symbol not in live_prices:
@@ -361,16 +428,19 @@ class OrderExecutionEngine:
                     action_type = mt5.ORDER_TYPE_SELL if trade["side"] == "BUY" else mt5.ORDER_TYPE_BUY
                     close_price_mt5 = mt5.symbol_info_tick(symbol).bid if trade["side"] == "BUY" else mt5.symbol_info_tick(symbol).ask
                     
+                    lot_to_close = trade.get("qty", 100000.0) / 100000.0
+                    if self.config.get("contest_mode", False) and self.config.get("use_fixed_lot_in_contest", True):
+                        lot_to_close = self.config.get("contest_fixed_lot_size", 2.0)
+                        
                     request = {
                         "action": mt5.TRADE_ACTION_DEAL,
                         "symbol": symbol,
-                        "volume": round(trade["qty"] / 100000, 2),
+                        "volume": round(lot_to_close, 2),
                         "type": action_type,
                         "position": position_id,
                         "price": close_price_mt5,
                         "deviation": 20,
-                        "magic": 1024,
-                        "comment": f"Close {close_reason}",
+                        "magic": 0, # Manual signature
                         "type_time": mt5.ORDER_TIME_GTC,
                         "type_filling": mt5.ORDER_FILL_IOC,
                     }

@@ -3,11 +3,32 @@
   "paper_trading": true,
   "symbols": [
     "XAU/USD",
+    "XAG/USD",
+    "PLATINUM/USD",
+    "PALLADIUM/USD",
     "EUR/USD",
     "GBP/USD",
     "USD/JPY",
+    "AUD/USD",
+    "USD/CAD",
+    "USD/CHF",
+    "NZD/USD",
     "BRENT/USD",
-    "SOL/USDT"
+    "BTC/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "DOGE/USDT",
+    "TON/USDT"
+  ],
+  "active_symbols": [
+    "XAU/USD",
+    "XAG/USD",
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY"
   ],
   "timeframes": [
     "1m",
@@ -56,6 +77,16 @@
   "whatsapp_instance_id": "instance99999",
   "whatsapp_token": "YOUR_WHATSAPP_GATEWAY_TOKEN",
   "whatsapp_phone": "YOUR_WHATSAPP_PHONE_NUMBER",
-  "prop_drawdown_limit": 4.0,
-  "prop_drawdown_breached": false
+  "prop_drawdown_limit": 4.5,
+  "prop_overall_drawdown_limit": 9.0,
+  "prop_drawdown_breached": false,
+  "max_active_positions_limit": 5,
+  "max_daily_trades_limit": 45,
+  "contest_mode": true,
+  "contest_risk_percentage": 1.5,
+  "contest_fixed_lot_size": 2.0,
+  "use_fixed_lot_in_contest": true,
+  "contest_tp1_ratio": 1.5,
+  "contest_tp2_ratio": 3.0,
+  "contest_tp3_ratio": 5.0
 }

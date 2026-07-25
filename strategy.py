@@ -67,12 +67,15 @@ class TradingBrain:
         """
         The Ultimate Living AI Trading Brain:
         - Evaluates isolated indicator confirmations.
-        - Calculates an aggregate "Brain Score" (0 to 100) using a multi-factor weighting model.
-        - Generates fully descriptive Persian brochure logs.
+        - Integrates specialized 'Contest Mode' (حالت مسابقات تهاجمی) with larger targets
+          and high-frequency triggers.
         """
-        sensitivity = self.config.get("sensitivity", "medium").lower()
+        contest_mode = self.config.get("contest_mode", False)
+        
+        # In contest mode, enforce high sensitivity to capture a high volume of signals
+        sensitivity = "high" if contest_mode else self.config.get("sensitivity", "medium").lower()
         trading_tf = self.config.get("trading_timeframe", "15m")
-        threshold = self.config.get("brain_score_threshold", 70)
+        threshold = 60 if contest_mode else self.config.get("brain_score_threshold", 70) # Lower score threshold in contest mode for more entries!
         
         if trading_tf not in multi_tf_data:
             return {'action': 'HOLD', 'reason': f"Missing main trading timeframe data: {trading_tf}"}
@@ -94,7 +97,6 @@ class TradingBrain:
         current_price = last_row['close']
         rsi = last_row['RSI']
         
-        # MAs
         ma_short_col = f"EMA_{self.config.get('ma_short', 20)}"
         ma_medium_col = f"EMA_{self.config.get('ma_medium', 50)}"
         ma_long_col = f"EMA_{self.config.get('ma_long', 200)}"
@@ -106,7 +108,6 @@ class TradingBrain:
         prev_ema20 = prev_row.get(ma_short_col, current_price)
         prev_ema50 = prev_row.get(ma_medium_col, current_price)
 
-        # Ichimoku
         tenkan = last_row.get('tenkan_sen', current_price)
         kijun = last_row.get('kijun_sen', current_price)
         span_a = last_row.get('senkou_span_a', current_price)
@@ -115,14 +116,10 @@ class TradingBrain:
         prev_tenkan = prev_row.get('tenkan_sen', current_price)
         prev_kijun = prev_row.get('kijun_sen', current_price)
 
-        # MACD
         macd_line = last_row.get('macd_line', 0.0)
         macd_signal = last_row.get('macd_signal', 0.0)
-        macd_hist = last_row.get('macd_hist', 0.0)
         
-        # Bollinger Bands
         bb_upper = last_row.get('bb_upper', current_price)
-        bb_middle = last_row.get('bb_middle', current_price)
         bb_lower = last_row.get('bb_lower', current_price)
 
         # --- ISOLATED CONFIRMATIONS & SCORING ---
@@ -131,7 +128,6 @@ class TradingBrain:
         
         confirmations = {}
 
-        # 1. EMA 200 Trend Filter (Weight: 20 points)
         if current_price > ema200:
             confirmations["EMA 200"] = "BULLISH 🟢"
             buy_score += 20
@@ -139,7 +135,6 @@ class TradingBrain:
             confirmations["EMA 200"] = "BEARISH 🔴"
             sell_score += 20
 
-        # 2. EMA 20/50 Crossover (Weight: 15 points)
         if ema20 > ema50:
             confirmations["EMA 20/50"] = "BULLISH 🟢"
             buy_score += 15
@@ -147,7 +142,6 @@ class TradingBrain:
             confirmations["EMA 20/50"] = "BEARISH 🔴"
             sell_score += 15
 
-        # 3. Ichimoku Cloud Breakout (Weight: 15 points)
         max_cloud = max(span_a, span_b)
         min_cloud = min(span_a, span_b)
         if current_price > max_cloud:
@@ -159,7 +153,6 @@ class TradingBrain:
         else:
             confirmations["Ichimoku Cloud"] = "NEUTRAL (Inside) 🟡"
 
-        # 4. Ichimoku TK Cross (Weight: 15 points)
         if tenkan > kijun:
             confirmations["Ichimoku TK Cross"] = "BULLISH (Tenkan > Kijun) 🟢"
             buy_score += 15
@@ -167,7 +160,6 @@ class TradingBrain:
             confirmations["Ichimoku TK Cross"] = "BEARISH (Tenkan < Kijun) 🔴"
             sell_score += 15
 
-        # 5. RSI Momentum (Weight: 15 points)
         if 50 < rsi < 70:
             confirmations["RSI"] = f"BULLISH ({round(rsi, 1)}) 🟢"
             buy_score += 15
@@ -176,12 +168,11 @@ class TradingBrain:
             sell_score += 15
         elif rsi >= 70:
             confirmations["RSI"] = f"OVERBOUGHT ({round(rsi, 1)}) ⚠️"
-            sell_score += 5 # Adds slightly to bearish reversal probability
+            sell_score += 5
         else:
             confirmations["RSI"] = f"OVERSOLD ({round(rsi, 1)}) ⚠️"
             buy_score += 5
 
-        # 6. MACD Histogram & Signal (Weight: 10 points)
         if macd_line > macd_signal:
             confirmations["MACD"] = "BULLISH (Golden Cross) 🟢"
             buy_score += 10
@@ -189,8 +180,6 @@ class TradingBrain:
             confirmations["MACD"] = "BEARISH (Death Cross) 🔴"
             sell_score += 10
 
-        # 7. Bollinger Bands Location (Weight: 10 points)
-        # Price near lower band is bullish bounce; near upper is bearish pullback
         bb_width = bb_upper - bb_lower if (bb_upper - bb_lower) > 0 else 1.0
         pct_b = (current_price - bb_lower) / bb_width
         
@@ -208,12 +197,12 @@ class TradingBrain:
         final_score = 0
         brochure_reason = ""
         
-        # Verify HTF alignment before enabling score trigger (unless sensitivity is high)
         is_htf_aligned = True
-        if sensitivity == "low":
-            is_htf_aligned = (htf_trend == 'BULLISH' if buy_score > sell_score else htf_trend == 'BEARISH')
-        elif sensitivity == "medium":
-            is_htf_aligned = (htf_trend in ['BULLISH', 'NEUTRAL'] if buy_score > sell_score else htf_trend in ['BEARISH', 'NEUTRAL'])
+        if not contest_mode: # Standard safe mode uses trend check
+            if sensitivity == "low":
+                is_htf_aligned = (htf_trend == 'BULLISH' if buy_score > sell_score else htf_trend == 'BEARISH')
+            elif sensitivity == "medium":
+                is_htf_aligned = (htf_trend in ['BULLISH', 'NEUTRAL'] if buy_score > sell_score else htf_trend in ['BEARISH', 'NEUTRAL'])
 
         if is_htf_aligned:
             if buy_score >= threshold and buy_score > sell_score:
@@ -223,30 +212,31 @@ class TradingBrain:
                 action = 'SELL'
                 final_score = sell_score
 
-        # Generate the ultimate Persian Analyst Brochure Report Card!
+        # Generate Farsi Analyst Brochure
+        mode_suffix = " (🏆 حالت ویژه مسابقات تهاجمی - اهداف سود بزرگ فعال)" if contest_mode else ""
         if action == 'BUY':
             brochure_reason = (
-                f"🦅 **گزارش بروشور تحلیلی و تاییدیه صعودی آونیکس (Avenix Live Report)**\n\n"
-                f"من با پایش هوشمند بازار در ثانیه جاری، یک الگوی همگرایی صعودی بسیار پرقدرت و کلاسی روی نماد **{symbol}** شناسایی کردم.\n\n"
+                f"🦅 **گزارش بروشور تحلیلی و تاییدیه صعودی آونیکس (Avenix Contest Report)**{mode_suffix}\n\n"
+                f"من با پایش هوشمند بازار در ثانیه جاری، یک الگوی همگرایی صعودی بسیار پرقدرت روی نماد **{symbol}** شناسایی کردم.\n\n"
                 f"🔍 **چک‌لیست تاییده‌های مغز سیستم (امتیاز صعودی: {final_score} از ۱۰۰):**\n"
-                f" ├ 📈 **روند بلندمدت:** قیمت بالای میانگین متحرک ۲۰۰ روزه قفل شده است (گرایش صعودی تأیید شد).\n"
-                f" ├ ☁️ **ایچیموکو:** قیمت کاملاً بالای لبه حمایتی ابر کومو قرار دارد و تقاطع خطوط محرک (تنکان/کیجون) صادر گردید.\n"
-                f" ├ 📊 **مومنتوم RSI:** شاخص قدرت در تراز ایده آل {round(rsi, 1)} است که نشان از هجوم خریداران جدید دارد.\n"
-                f" ├ ⚡ **سیستم MACD:** تقاطع طلایی مکدی رخ داده و میله‌های هیستوگرام بالای خط صفر فعال شده‌اند.\n"
-                f" └ 📉 **باند بولینگر:** انقباض باندها تمام شده و نفوذ به باند بالایی شتاب حرکتی را با قدرت تأیید می‌کند.\n\n"
-                f"🏆 **نتیجه‌گیری هوش مصنوعی:** با تایید این تریپل همپوشانی و عبور از حد نصاب امتیاز {threshold}٪، یک پوزیشن خرید (Long) با امنیت معاملاتی فوق‌العاده بالا و ۳ حد سود پله‌ای فعال گردید."
+                f" ├ 📈 **روند بلندمدت:** قیمت بالای میانگین متحرک ۲۰۰ روزه قرار دارد.\n"
+                f" ├ ☁️ **ایچیموکو:** قیمت بالای لبه حمایتی ابر کومو قرار دارد.\n"
+                f" ├ 📊 **مومنتوم RSI:** شاخص قدرت در تراز مطلوب {round(rsi, 1)} است.\n"
+                f" ├ ⚡ **سیستم MACD:** تقاطع طلایی مکدی صادر شده است.\n"
+                f" └ 📉 **باند بولینگر:** انقباض باندها تمام شده و نفوذ به باند بالایی شتاب حرکتی را تأیید می‌کند.\n\n"
+                f"🏆 **نتیجه‌گیری هوش مصنوعی:** با تایید این تریپل همپوشانی و عبور از حد نصاب امتیاز {threshold}٪، یک پوزیشن خرید (Long) تهاجمی با حجم بزرگ مسابقاتی و ۳ حد سود دامنه بزرگ فعال گردید."
             )
         elif action == 'SELL':
             brochure_reason = (
-                f"🦅 **گزارش بروشور تحلیلی و تاییدیه نزولی آونیکس (Avenix Live Report)**\n\n"
+                f"🦅 **گزارش بروشور تحلیلی و تاییدیه نزولی آونیکس (Avenix Contest Report)**{mode_suffix}\n\n"
                 f"یک الگوی سقوط شتاب‌دهنده و شکست سطوح حمایتی روی نماد **{symbol}** پایش گردید.\n\n"
                 f"🔍 **چک‌لیست تاییده‌های مغز سیستم (امتیاز نزولی: {final_score} از ۱۰۰):**\n"
-                f" ├ 📉 **روند بلندمدت:** قیمت در لایه زیرین میانگین متحرک ۲۰۰ قفل شده است (گرایش نزولی تأیید شد).\n"
-                f" ├ ☁️ **ایچیموکو:** شکست قیمت به زیر ابر کومو تثبیت شده و تقاطع مرگ تنکان/کیجون صادر گردید.\n"
+                f" ├ 📉 **روند بلندمدت:** قیمت در لایه نزولی زیر EMA 200 قرار دارد.\n"
+                f" ├ ☁️ **ایچیموکو:** شکست قیمت به زیر ابر کومو تثبیت شده است.\n"
                 f" ├ 📊 **مومنتوم RSI:** ریزش شاخص به تراز نزولی {round(rsi, 1)} نشان‌دهنده غلبه مطلق فروشندگان است.\n"
-                f" ├ ⚡ **سیستم MACD:** تقاطع مرگ مکدی و ریزش پرقدرت میله‌های هیستوگرام به زیر خط صفر.\n"
-                f" └ 📈 **باند بولینگر:** قیمت در حال خزیدن روی لبه باند پایینی است که پمپاژ پرقدرت عرضه را تأیید می‌کند.\n\n"
-                f"🏆 **نتیجه‌گیری هوش مصنوعی:** با همسویی کامل تایم‌فریم معاملاتی با روندهای بالا دست و عبور از حد نصاب امتیاز {threshold}٪، پوزیشن فروش (Short) با امنیت بالا صادر شد."
+                f" ├ ⚡ **سیستم MACD:** تقاطع مرگ مکدی تایید گردید.\n"
+                f" └ 📈 **باند بولینگر:** قیمت در حال خزیدن روی لبه باند پایینی است.\n\n"
+                f"🏆 **نتیجه‌گیری هوش مصنوعی:** با همسویی کامل تایم‌فریم معاملاتی با روندهای بالا دست و عبور از حد نصاب امتیاز {threshold}٪، پوزیشن فروش (Short) تهاجمی مسابقاتی صادر شد."
             )
 
         sl = 0.0
@@ -254,9 +244,15 @@ class TradingBrain:
         tp2 = 0.0
         tp3 = 0.0
 
-        tp1_ratio = self.config.get("tp1_ratio", 1.0)
-        tp2_ratio = self.config.get("tp2_ratio", 2.0)
-        tp3_ratio = self.config.get("tp3_ratio", 3.0)
+        # Adjust Take Profit targets based on Mode (Contest uses much wider/larger TPs)
+        if contest_mode:
+            tp1_ratio = self.config.get("contest_tp1_ratio", 1.5)
+            tp2_ratio = self.config.get("contest_tp2_ratio", 3.0)
+            tp3_ratio = self.config.get("contest_tp3_ratio", 5.0)
+        else:
+            tp1_ratio = self.config.get("tp1_ratio", 1.0)
+            tp2_ratio = self.config.get("tp2_ratio", 2.0)
+            tp3_ratio = self.config.get("tp3_ratio", 3.0)
 
         if action == 'BUY':
             suggested_sl = min(kijun, min_cloud)
@@ -305,4 +301,3 @@ class TradingBrain:
                 'span_b': round(span_b, 4)
             }
         }
-
