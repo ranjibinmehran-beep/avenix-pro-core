@@ -21,6 +21,47 @@ import datetime
 import streamlit.components.v1 as components
 from bot import RealTimeTradingBot
 from execution import OrderExecutionEngine
+from signal_room import SignalRoom
+
+
+# --- MANUAL TRADE ALERTS -------------------------------------------------
+# bot.py already alerts on AUTOMATED trades. The dashboard never imported
+# SignalRoom, so MANUAL Buy/Sell/Close produced no Telegram or Bale message.
+def notify_manual_open(symbol, side, entry, sl, tp1, tp2, tp3, lot):
+    """Send an open-trade alert for a manually executed order."""
+    try:
+        room = SignalRoom()
+        arrow = "\U0001F7E2 خرید (BUY)" if side == "BUY" else "\U0001F534 فروش (SELL)"
+        msg = (
+            f"\u26A1\uFE0F *معامله دستی در آونیکس ثبت شد* \u26A1\uFE0F\n\n"
+            f"\U0001F4C8 *نماد:* {symbol}\n"
+            f"\u2195\uFE0F *جهت:* {arrow}\n"
+            f"\U0001F4B5 *قیمت ورود:* {entry}\n"
+            f"\U0001F4E6 *حجم:* {lot}\n\n"
+            f"\U0001F6D1 *حد ضرر (SL):* {round(sl, 5)}\n"
+            f"\U0001F3AF *TP1:* {round(tp1, 5)}\n"
+            f"\U0001F3AF *TP2:* {round(tp2, 5)}\n"
+            f"\U0001F3AF *TP3:* {round(tp3, 5)}\n\n"
+            f"\u23F0 *زمان:* {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"\U0001F464 _این معامله به صورت دستی توسط تریدر باز شد_"
+        )
+        if room.config.get("enable_telegram", False):
+            room.send_telegram_message(msg)
+        if room.config.get("enable_bale", False):
+            room.send_bale_message(msg)
+        if room.config.get("enable_whatsapp", False):
+            room.send_whatsapp_message(msg)
+    except Exception as e:
+        print(f"[ManualAlert-Open] {e}")
+
+
+def notify_manual_close(trade):
+    """Send a close alert for a manually closed position (green/red)."""
+    try:
+        SignalRoom().send_closed_trade_alert(trade)
+    except Exception as e:
+        print(f"[ManualAlert-Close] {e}")
+# -------------------------------------------------------------------------
 
 # Page Configuration - Clean & Modern Layout
 st.set_page_config(
@@ -535,6 +576,9 @@ else:
                         
                         res = executor.open_trade(selected_symbol, "BUY", current_market_price, quick_sl, quick_tp1, quick_tp2, quick_tp3, "ثبت خرید فوق‌سریع دستی", is_manual=True)
                         if res.get("status") == "success":
+                            notify_manual_open(selected_symbol, "BUY", current_market_price,
+                                               quick_sl, quick_tp1, quick_tp2, quick_tp3,
+                                               lot_size_input)
                             st.success("Instant BUY order opened successfully on MT5!")
                             time.sleep(1)
                             st.rerun()
@@ -558,6 +602,9 @@ else:
                         
                         res = executor.open_trade(selected_symbol, "SELL", current_market_price, quick_sl, quick_tp1, quick_tp2, quick_tp3, "ثبت فروش فوق‌سریع دستی", is_manual=True)
                         if res.get("status") == "success":
+                            notify_manual_open(selected_symbol, "SELL", current_market_price,
+                                               quick_sl, quick_tp1, quick_tp2, quick_tp3,
+                                               lot_size_input)
                             st.success("Instant SELL order opened successfully on MT5!")
                             time.sleep(1)
                             st.rerun()
@@ -725,6 +772,7 @@ else:
                         with st.spinner("Closing..."):
                             closed_pos = executor.close_trade_manually(trade["id"], trade["current_price"])
                             if closed_pos:
+                                notify_manual_close(closed_pos)
                                 st.success(f"Position Closed manually at {closed_pos['close_price']}!")
                                 time.sleep(1)
                                 st.rerun()
