@@ -1034,6 +1034,24 @@ else:
                 lev = st.number_input(t["leverage"], min_value=1, max_value=125, value=config.get("default_leverage", 1))
                 sl_rat = st.slider(t["sl_ratio"], 0.5, 5.0, float(config.get("sl_ratio", 1.5)), 0.1)
                 score_thresh = st.slider(t["score_thresh"], 50, 95, config.get("brain_score_threshold", 70))
+                # --- FIX: 'selected_sens' was referenced by the Save button (line ~1157)
+                # but its widget was never created -> NameError crashed the whole app.
+                _sens_opts = ["low", "medium", "high"]
+                _sens_labels = {
+                    "low":    "کم (تاییدهای سخت‌گیرانه، سیگنال کمتر)",
+                    "medium": "متوسط (متعادل)",
+                    "high":   "زیاد (تاییدهای سریع، سیگنال بیشتر)",
+                }
+                _cur_sens = str(config.get("sensitivity", "medium")).lower()
+                if _cur_sens not in _sens_opts:
+                    _cur_sens = "medium"
+                selected_sens = st.selectbox(
+                    "🎚️ حساسیت موتور تحلیل (Signal Sensitivity)",
+                    options=_sens_opts,
+                    index=_sens_opts.index(_cur_sens),
+                    format_func=lambda x: _sens_labels.get(x, x),
+                    help="در حالت مسابقه (Contest Mode) به‌صورت خودکار روی 'high' اجرا می‌شود.",
+                )
             with col_set_r2:
                 st.markdown(f"🎯 **{t['tp_reward']}**")
                 tp1_val = st.slider("TP1 R:R", 0.5, 2.0, float(config.get("tp1_ratio", 1.0)), 0.1)
@@ -1052,6 +1070,30 @@ else:
             with c_col2:
                 c_risk = st.number_input("یا مدیریت سرمایه شناور مسابقاتی (مثال: ۱.۵٪ کل حساب)", value=float(config.get("contest_risk_percentage", 1.5)), min_value=0.1, max_value=10.0, step=0.1)
             
+            # --- FIX: 'prop_dd_val' was referenced by the Save button (line ~1197)
+            # but its widget was never created -> the next NameError after selected_sens.
+            # execution.py actively uses these limits, so they belong in the UI.
+            st.markdown("🛡️ **سقف دراودان پراپ‌فرم (Prop Drawdown Guards):**")
+            pd_col1, pd_col2 = st.columns(2)
+            with pd_col1:
+                prop_dd_val = st.slider(
+                    "حداکثر دراودان روزانه (٪)", 1.0, 5.0,
+                    float(config.get("prop_drawdown_limit", 4.5)), 0.1,
+                    help="قانون رسمی FundedNext: ۵٪. مقدار کمتر = حاشیه امن.",
+                )
+            with pd_col2:
+                prop_overall_dd_val = st.slider(
+                    "حداکثر دراودان کل (٪)", 2.0, 10.0,
+                    float(config.get("prop_overall_drawdown_limit", 9.0)), 0.1,
+                    help="قانون رسمی FundedNext: ۱۰٪. مقدار کمتر = حاشیه امن.",
+                )
+            if prop_dd_val >= 5.0 or prop_overall_dd_val >= 10.0:
+                st.warning(
+                    "⚠️ این مقادیر روی حد رسمی یا بالاتر تنظیم شده‌اند. "
+                    "چون ضرر پوزیشن‌های باز بعد از فعال شدن گارد هم ادامه پیدا می‌کند، "
+                    "حاشیه امن لازم است (مثلاً ۴.۵٪ و ۹٪)."
+                )
+
             st.markdown("🎯 **تنظیم اهداف سود بزرگ مسابقاتی (Contest Take Profits R:R):**")
             cc_tp1, cc_tp2, cc_tp3 = st.columns(3)
             with cc_tp1:
@@ -1177,6 +1219,7 @@ else:
             config["bb_std_dev"] = bb_std
             config["brain_score_threshold"] = score_thresh
             config["prop_drawdown_limit"] = prop_dd_val
+            config["prop_overall_drawdown_limit"] = prop_overall_dd_val
             
             # Save Contest parameters
             config["contest_mode"] = c_mode
