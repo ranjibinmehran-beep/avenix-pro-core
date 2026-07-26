@@ -103,23 +103,6 @@ st.markdown("""
         font-weight: 700;
         font-size: 15px;
     }
-    
-    /* Force horizontal column layout on mobile screens to match TradingView widgets */
-    @media (max-width: 768px) {
-        div[data-testid="stHorizontalBlock"] {
-            display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-            align-items: center !important;
-            gap: 8px !important;
-            width: 100% !important;
-        }
-        div[data-testid="column"] {
-            min-width: 0px !important;
-            width: auto !important;
-            flex: 1 1 0% !important;
-        }
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -175,79 +158,6 @@ def is_crypto_symbol(symbol):
     return True
 
 config = load_config()
-
-def symbol_mapping_back(mt5_symbol):
-    sym = mt5_symbol.upper()
-    if "XAU" in sym: return "XAU/USD"
-    if "XAG" in sym: return "XAG/USD"
-    if "EURUSD" in sym: return "EUR/USD"
-    if "GBPUSD" in sym: return "GBP/USD"
-    if "USDJPY" in sym: return "USD/JPY"
-    if "BTC" in sym: return "BTC/USDT"
-    if "ETH" in sym: return "ETH/USDT"
-    if "SOL" in sym: return "SOL/USDT"
-    if len(sym) == 6 and not "/" in sym:
-        return f"{sym[:3]}/{sym[3:]}"
-    return mt5_symbol
-
-def sync_live_mt5_data():
-    if config.get("broker_type") == "forex_mt5":
-        try:
-            import MetaTrader5 as mt5
-            import datetime
-            if mt5.initialize():
-                account = config.get("mt5_account_id", "")
-                password = config.get("mt5_password", "")
-                server = config.get("mt5_server", "")
-                if account and password:
-                    authorized = mt5.login(login=int(account), password=password, server=server)
-                    if authorized:
-                        acc_info = mt5.account_info()
-                        if acc_info:
-                            portfolio = load_portfolio()
-                            portfolio["balance"] = acc_info.balance
-                            
-                            # Fetch last 90 days deals history from MT5
-                            from_date = datetime.datetime.now() - datetime.timedelta(days=90)
-                            to_date = datetime.datetime.now()
-                            deals = mt5.history_deals_get(from_date, to_date)
-                            
-                            if deals:
-                                completed_trades_list = []
-                                for d in deals:
-                                    if d.entry == 1:  # DEAL_ENTRY_OUT (closed trade)
-                                        original_side = "BUY" if d.type == 1 else "SELL"
-                                        qty = d.volume
-                                        pnl = d.profit + d.commission + d.swap
-                                        close_price = d.price
-                                        
-                                        entry_price = 0.0
-                                        for open_deal in deals:
-                                            if open_deal.position_id == d.position_id and open_deal.entry == 0:
-                                                entry_price = open_deal.price
-                                                break
-                                                
-                                        close_time = datetime.datetime.fromtimestamp(d.time).strftime('%Y-%m-%d %H:%M:%S')
-                                        completed_trades_list.append({
-                                            "symbol": symbol_mapping_back(d.symbol),
-                                            "side": original_side,
-                                            "qty": qty,
-                                            "entry_price": entry_price,
-                                            "close_price": close_price,
-                                            "pnl": round(pnl, 2),
-                                            "close_time": close_time,
-                                            "account_id": str(account),
-                                            "status": "CLOSED"
-                                        })
-                                portfolio["completed_trades"] = completed_trades_list
-                            
-                            save_portfolio(portfolio)
-        except Exception as e:
-            print(f"[Live MT5 Sync Error]: {e}")
-
-# Run Sync on Load
-sync_live_mt5_data()
-
 portfolio = load_portfolio()
 signals = load_signals()
 
@@ -290,7 +200,6 @@ TXT = {
         "tab_broker": "🔌 اتاق اتصال کارگزاری (Broker Connection)",
         "tab_contest": "🏆 اتاق فانددنکست (FundedNext Portal)",
         "tab_settings": "⚙️ تنظیمات فوق‌پیشرفته سیستم",
-        "tab_history": "📜 تاریخچه معاملات حساب",
         "selector_symbol": "انتخاب نماد معاملاتی جهت تحلیل زنده",
         "selector_tf": "تایم فریم چارت",
         "tv_caption": "🌐 <b>اتاق چارت تریدینگ‌ویو:</b> این نمودار کاملاً ریسپانسیو و تمام‌صفحه است. شما می‌توانید در گذشته بازار اسکرول کنید، ابزارهای ترسیمی اضافه کنید و اندیکاتورها را شخصی‌سازی کنید.",
@@ -393,7 +302,6 @@ TXT = {
         "tab_broker": "🔌 Broker Connect",
         "tab_contest": "🏆 FundedNext Portal",
         "tab_settings": "⚙️ System Config",
-        "tab_history": "📜 Account History",
         "selector_symbol": "Select Asset for Live Analysis",
         "selector_tf": "Chart Timeframe",
         "tv_caption": "🌐 <b>TradingView Terminal:</b> This chart is fully interactive. You can scroll back, add drawing tools, and customize indicators natively.",
@@ -575,9 +483,9 @@ else:
         weekend_display = weekend_msg_fa if lang_code == "fa" else weekend_msg_en
         st.markdown(weekend_display, unsafe_allow_html=True)
 
-    # ----------------- ACTIVE MAIN TABS (7-Tab Layout: Completely Separated!) -----------------
-    tab_chart_view, tab_brain_view, tab_signals_view, tab_broker_view, tab_contest_view, tab_settings_view, tab_history_view = st.tabs([
-        t["tab_chart"], t["tab_brain"], t["tab_signals"], t["tab_broker"], t["tab_contest"], t["tab_settings"], t["tab_history"]
+    # ----------------- ACTIVE MAIN TABS (6-Tab Layout: Completely Separated!) -----------------
+    tab_chart_view, tab_brain_view, tab_signals_view, tab_broker_view, tab_contest_view, tab_settings_view = st.tabs([
+        t["tab_chart"], t["tab_brain"], t["tab_signals"], t["tab_broker"], t["tab_contest"], t["tab_settings"]
     ])
 
     # ----------------- TAB 1: TRADINGVIEW LIVE CHART & INSTANT TRADING PANEL -----------------
@@ -605,10 +513,10 @@ else:
         # --- ⚡ HIGH-SPEED QUICK TRADING PANEL PLACED CONVENIENTLY ABOVE CHART ---
         st.markdown("<p style='font-weight: 700; color: #f8fafc; margin-top: 15px;'>⚡ پنل ترید فوق‌سریع آونیکس (Avenix One-Click Fast Execution):</p>", unsafe_allow_html=True)
         
-        col_exec_sell, col_exec_lot, col_exec_buy = st.columns([1.5, 1, 1.5])
+        col_exec_sell, col_exec_lot, col_exec_buy = st.columns([1, 1, 1])
         with col_exec_lot:
             default_lot_val = 2.0 if config.get("contest_mode", False) else 1.0
-            lot_size_input = st.number_input("Lot / حجم معامله", min_value=0.01, max_value=50.0, value=default_lot_val, step=0.1, label_visibility="collapsed")
+            lot_size_input = st.number_input("Lot / حجم معامله", min_value=0.01, max_value=50.0, value=default_lot_val, step=0.1)
             
         with col_exec_buy:
             if st.button("🚀 BUY (LONG) | خرید فوری", use_container_width=True):
@@ -627,21 +535,6 @@ else:
                         
                         res = executor.open_trade(selected_symbol, "BUY", current_market_price, quick_sl, quick_tp1, quick_tp2, quick_tp3, "ثبت خرید فوق‌سریع دستی", is_manual=True)
                         if res.get("status") == "success":
-                            # Send real-time open alert to Telegram/Bale
-                            from signal_room import SignalRoom
-                            s_room = SignalRoom()
-                            s_room.add_signal(
-                                symbol=selected_symbol,
-                                side="BUY",
-                                entry_price=current_market_price,
-                                sl=quick_sl,
-                                tp1=quick_tp1,
-                                tp2=quick_tp2,
-                                tp3=quick_tp3,
-                                reason="معامله خرید دستی توسط کاربر از روی پنل چارت لایو آونیکس",
-                                indicators={},
-                                brain_score=100
-                            )
                             st.success("Instant BUY order opened successfully on MT5!")
                             time.sleep(1)
                             st.rerun()
@@ -665,21 +558,6 @@ else:
                         
                         res = executor.open_trade(selected_symbol, "SELL", current_market_price, quick_sl, quick_tp1, quick_tp2, quick_tp3, "ثبت فروش فوق‌سریع دستی", is_manual=True)
                         if res.get("status") == "success":
-                            # Send real-time open alert to Telegram/Bale
-                            from signal_room import SignalRoom
-                            s_room = SignalRoom()
-                            s_room.add_signal(
-                                symbol=selected_symbol,
-                                side="SELL",
-                                entry_price=current_market_price,
-                                sl=quick_sl,
-                                tp1=quick_tp1,
-                                tp2=quick_tp2,
-                                tp3=quick_tp3,
-                                reason="معامله فروش دستی توسط کاربر از روی پنل چارت لایو آونیکس",
-                                indicators={},
-                                brain_score=100
-                            )
                             st.success("Instant SELL order opened successfully on MT5!")
                             time.sleep(1)
                             st.rerun()
@@ -690,46 +568,9 @@ else:
         active_trades = portfolio.get("active_trades", [])
         symbol_trades = [tr for tr in active_trades if tr["symbol"] == selected_symbol]
         if symbol_trades:
-            st.markdown("<p style='font-weight: 700; color: #fbbf24; font-size: 14px; margin-top: 15px;'>🛡️ شبیه‌ساز تصویری خطوط سفارش فعال آونیکس (MT5 Style Order Lines):</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-weight: 700; color: #fbbf24; font-size: 13px; margin-top: 15px;'>🔔 موقعیت‌های فعال شما روی چارت (قیمت ورود، حد ضرر و حد سود):</p>", unsafe_allow_html=True)
             for tr in symbol_trades:
-                entry = tr["entry_price"]
-                sl = tr["sl"]
-                tp = tr["tp1"]
-                side = tr["side"]
-                qty = tr.get("qty", 1.0)
-                
-                # Calculate live PnL for this specific trade
-                side_mult = 1 if side == "BUY" else -1
-                pnl_cash = qty * (current_market_price - entry) * side_mult
-                pnl_color = "#10b981" if pnl_cash >= 0 else "#ef4444"
-                sign = "+" if pnl_cash >= 0 else ""
-                
-                st.markdown(f"""
-                <div style='background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 15px; margin-bottom: 15px;'>
-                    <div style='display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 13px;'>
-                        <span style='color: #cbd5e1; font-weight: bold;'>📊 پوزیشن زنده {side} در {tr['symbol']}</span>
-                        <span style='color: {pnl_color}; font-weight: 700;'>سود/زیان زنده: {sign}${pnl_cash:,.2f}</span>
-                    </div>
-                    <!-- TP Line -->
-                    <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 8px;'>
-                        <span style='color: #10b981; font-weight: bold; width: 80px; font-size: 12px;'>🟢 TP:</span>
-                        <div style='flex: 1; border-bottom: 2px dotted #10b981; opacity: 0.6;'></div>
-                        <span style='color: #10b981; font-weight: bold; font-size: 13px;'>${tp:,.2f}</span>
-                    </div>
-                    <!-- Entry Line -->
-                    <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 8px;'>
-                        <span style='color: #3b82f6; font-weight: bold; width: 80px; font-size: 12px;'>🔵 {side}:</span>
-                        <div style='flex: 1; border-bottom: 2px dotted #3b82f6; opacity: 0.6;'></div>
-                        <span style='color: #3b82f6; font-weight: bold; font-size: 13px;'>${entry:,.2f} (حجم: {qty:.2f})</span>
-                    </div>
-                    <!-- SL Line -->
-                    <div style='display: flex; align-items: center; gap: 10px;'>
-                        <span style='color: #f97316; font-weight: bold; width: 80px; font-size: 12px;'>🟠 SL:</span>
-                        <div style='flex: 1; border-bottom: 2px dotted #f97316; opacity: 0.6;'></div>
-                        <span style='color: #f97316; font-weight: bold; font-size: 13px;'>${sl:,.2f}</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.info(f"📈 معامله {tr['side']} فعال | نقطه ورود: {tr['entry_price']:.2f} | حد ضرر (SL): {tr['sl']:.2f} | حد سود اول (TP1): {tr['tp1']:.2f}")
 
         # Map all 20 prestigious assets to TV institutional feeds
         symbol_mapping = {
@@ -884,11 +725,6 @@ else:
                         with st.spinner("Closing..."):
                             closed_pos = executor.close_trade_manually(trade["id"], trade["current_price"])
                             if closed_pos:
-                                # Send real-time close alert to Telegram/Bale
-                                from signal_room import SignalRoom
-                                s_room = SignalRoom()
-                                s_room.send_closed_trade_alert(closed_pos)
-                                
                                 st.success(f"Position Closed manually at {closed_pos['close_price']}!")
                                 time.sleep(1)
                                 st.rerun()
@@ -1009,33 +845,6 @@ else:
             st.rerun()
             
         st.markdown("</div>", unsafe_allow_html=True)
-
-        # Persistent config warning and download button
-        st.markdown("<br/>", unsafe_allow_html=True)
-        st.markdown("""
-        <div class='ios-card' style='border-right: 5px solid #eab308; background-color: rgba(234, 179, 8, 0.05);'>
-            <strong style='color: #eab308; font-size: 14px;'>⚠️ قفل امنیتی ماندگاری مشخصات حساب (Anti-Wipe Guard)</strong><br/><br/>
-            <span style='color: #cbd5e1; font-size: 13px; line-height: 1.6;'>
-            به دلیل ساختار سرورهای ابری عمومی، اطلاعات حساب شما پس از مدتی بی‌کار ماندن سرور پاک شده و به حالت اولیه گیت‌هاب برمی‌گردند. 
-            برای اینکه مشخصات لایت‌فایننس و توکن‌های شبکه‌های اجتماعی شما <b>برای همیشه ماندگار بمانند و هرگز پاک نشوند</b>:
-            کافیست ابتدا اطلاعات را در کادرهای بالا وارد کرده و دکمه ذخیره آبی بالا را بزنید، سپس روی دکمه سبز زیر کلیک کنید تا فایل پیکربندی پایدار دانلود شود. این فایل دانلود شده را در مخزن گیت‌هاب خود آپلود (جایگزین) کنید تا برای همیشه قفل شوند!
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        try:
-            with open("config.json", "r") as f:
-                config_str = f.read()
-        except Exception:
-            config_str = "{}"
-            
-        st.download_button(
-            label="📥 دانلود فایل پیکربندی پایدار جهت آپلود در گیت‌هاب (Download config.json)",
-            data=config_str,
-            file_name="config.json",
-            mime="application/json",
-            use_container_width=True
-        )
 
     # ----------------- 🏆 TAB 5: DEDICATED FUNDEDNEXT PORTAL (اتاق اختصاصی فانددنکست) -----------------
     with tab_contest_view:
@@ -1345,13 +1154,13 @@ else:
             config["whatsapp_instance_id"] = wa_inst
             config["whatsapp_token"] = wa_tok
             config["whatsapp_phone"] = wa_phone
-            config["sensitivity"] = config.get("sensitivity", "medium")
-            config["broker_type"] = config.get("broker_type", "forex_mt5")
-            config["mt5_account_id"] = config.get("mt5_account_id", "")
-            config["mt5_password"] = config.get("mt5_password", "")
-            config["mt5_server"] = config.get("mt5_server", "LiteFinance-MT5-Demo")
-            config["exchange_api_key"] = config.get("exchange_api_key", "")
-            config["exchange_secret_key"] = config.get("exchange_secret_key", "")
+            config["sensitivity"] = selected_sens
+            config["broker_type"] = selected_b
+            config["mt5_account_id"] = m_acc
+            config["mt5_password"] = m_pwd
+            config["mt5_server"] = m_srv
+            config["exchange_api_key"] = c_api
+            config["exchange_secret_key"] = c_sec
             config["ma_short"] = ma_s
             config["ma_medium"] = ma_m
             config["ma_long"] = ma_l
@@ -1382,100 +1191,3 @@ else:
             st.success("Settings Saved!")
             time.sleep(1)
             st.rerun()
-
-    # ----------------- TAB 7: ACCOUNT-SPECIFIC TRANSACTION HISTORY -----------------
-    with tab_history_view:
-        active_account_id = config.get("mt5_account_id", "Demo Simulator")
-        if not active_account_id:
-            active_account_id = "Demo Simulator"
-            
-        st.markdown(f"### 📜 تاریخچه معاملات متمرکز حساب: {active_account_id}")
-        st.markdown(f"<p style='color: #94a3b8; font-size: 13px;'>نمایش تاریخچه معاملات بسته شده و تایید شده منحصر به فرد حساب فعال شما</p>", unsafe_allow_html=True)
-        
-        # Period Filter Row
-        period_col = st.radio(
-            "انتخاب بازه زمانی تاریخچه معاملات:",
-            ["امروز", "هفته گذشته", "ماه گذشته", "سه ماه گذشته", "کل تاریخچه"],
-            horizontal=True,
-            index=4
-        )
-        
-        completed_trades = portfolio.get("completed_trades", [])
-        
-        # 1. Filter by unique account ID
-        account_trades = [tr for tr in completed_trades if tr.get("account_id", "Demo Simulator") == active_account_id]
-        
-        # 2. Filter by selected period
-        filtered_trades = []
-        now_dt = datetime.datetime.now()
-        
-        for tr in account_trades:
-            close_time_str = tr.get("close_time", "")
-            try:
-                close_dt = datetime.datetime.strptime(close_time_str, "%Y-%m-%d %H:%M:%S")
-                delta_days = (now_dt - close_dt).days
-                
-                if period_col == "امروز" and delta_days > 0:
-                    continue
-                elif period_col == "هفته گذشته" and delta_days > 7:
-                    continue
-                elif period_col == "ماه گذشته" and delta_days > 30:
-                    continue
-                elif period_col == "سه ماه گذشته" and delta_days > 90:
-                    continue
-            except Exception:
-                # Fallback for old/empty timestamps
-                if period_col != "کل تاریخچه":
-                    continue
-                    
-            filtered_trades.append(tr)
-            
-        if len(filtered_trades) == 0:
-            st.markdown(f"""
-            <div style='text-align: center; padding: 40px; color: #94a3b8;'>
-                <span style='font-size: 48px;'>🗃️</span><br/><br/>
-                <b>تاریخچه معامله‌ای برای این حساب در بازه انتخابی یافت نشد.</b>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # Show sum total of profit for the filtered trades
-            total_history_pnl = sum(tr.get("pnl", 0.0) for tr in filtered_trades)
-            sum_color = "#10b981" if total_history_pnl >= 0 else "#ef4444"
-            sign = "+" if total_history_pnl >= 0 else ""
-            
-            st.markdown(f"""
-            <div class='ios-card' style='border-left: 4px solid {sum_color}; display: flex; justify-content: space-between; align-items: center;'>
-                <span style='font-weight: bold; color: #cbd5e1;'>📊 خلاصه برآیند سود/زیان این بازه:</span>
-                <span style='color: {sum_color}; font-weight: bold; font-size: 18px;'>{sign}${total_history_pnl:,.2f}</span>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Render MT5 styled trade cards
-            for tr in reversed(filtered_trades):
-                symbol = tr.get("symbol", "N/A")
-                side = tr.get("side", "BUY")
-                qty = tr.get("qty", 1.0)
-                entry_p = tr.get("entry_price", 0.0)
-                close_p = tr.get("close_price", 0.0)
-                pnl = tr.get("pnl", 0.0)
-                close_time = tr.get("close_time", "N/A")
-                
-                side_color = "#3b82f6" if side == "BUY" else "#ef4444"
-                pnl_color = "#10b981" if pnl >= 0 else "#ef4444"
-                pnl_sign = "+" if pnl >= 0 else ""
-                
-                st.markdown(f"""
-                <div class='ios-card' style='border-right: 5px solid {pnl_color}; padding: 12px 18px; margin-bottom: 8px;'>
-                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;'>
-                        <div>
-                            <strong style='font-size: 14px; color: #f8fafc;'>{symbol}</strong>
-                            <span style='color: {side_color}; font-weight: bold; font-size: 12px; margin-left: 6px;'>{side.lower()} {qty:.2f}</span>
-                        </div>
-                        <span style='font-size: 11px; color: #94a3b8;'>{close_time}</span>
-                    </div>
-                    <div style='display: flex; justify-content: space-between; align-items: center;'>
-                        <span style='font-size: 13px; color: #cbd5e1;'>{entry_p:,.2f} → {close_p:,.2f}</span>
-                        <strong style='color: {pnl_color}; font-size: 14px;'>{pnl_sign}${pnl:,.2f}</strong>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
